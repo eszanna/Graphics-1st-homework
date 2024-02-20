@@ -18,8 +18,8 @@
 //
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Szlovak Anna
+// Neptun : OPOFGK
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -64,12 +64,13 @@ GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao, vboPoints;  // virtual world on the GPU
 unsigned int vboSelected;  // Buffer for selected points
 
-std::vector<GLfloat> vertices; //here I store the coordinates x and y
-std::vector<GLfloat> selected;
+std::vector<GLfloat> vertices; //here I store the coordinates x and y of every drawn point
+std::vector<GLfloat> selected; //and here the coordinates of the ones that we choose after pressing l
 
 bool lKeyPressed = false;
 bool pKeyPressed = false;
 
+GLint currently_binded_vbo; // for testing
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
@@ -85,14 +86,10 @@ void onInitialization() {
 		0, NULL); 		     // stride, offset: tightly packed
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-
-	glGenBuffers(1, &vboSelected);  // Generate buffer for selected points
-	glBindBuffer(GL_ARRAY_BUFFER, vboSelected);
-
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
-GLint currently_binded_vbo;
+
 // Window has become invalid: Redraw
 void onDisplay() {
 
@@ -113,25 +110,29 @@ void onDisplay() {
 
 	glBindVertexArray(vao);
 
-	std::cout << vboPoints << " id of the points" << std::endl;
-	std::cout << vboSelected << " id of the selected points" << std::endl;
-	glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &currently_binded_vbo);
+	//std::cout << vboPoints << " id of the points" << std::endl;
+	//std::cout << vboSelected << " id of the selected points" << std::endl;
+	//glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &currently_binded_vbo);
 
 		// Draw points
 		glBindBuffer(GL_ARRAY_BUFFER, vboPoints);  // Draw call
 		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
 		glPointSize(10.0f);
+		
 		glDrawArrays(GL_POINTS, 0 , vertices.size() / 2 );
 
 		// Draw selected points/lines 
-		if (selected.size() == 4) {
-			glBufferData(GL_ARRAY_BUFFER, selected.size() * sizeof(float), &selected[0], GL_STATIC_DRAW);
+		if (selected.size() >= 4) {
+			// Set color to (0, 1, 1) = cyan
+			int location = glGetUniformLocation(gpuProgram.getId(), "color");
+			glUniform3f(location, 0.0f, 1.0f, 1.0f); // 3 floats
+
+			glBufferData(GL_ARRAY_BUFFER, selected.size() * sizeof(float), &selected[0], GL_STATIC_DRAW); // updating the buffer data with the points we want to connect
 			glDrawArrays(GL_LINES, 0, selected.size() / 2);
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 		}
 
 		glutSwapBuffers(); // exchange buffers for double buffering
-		
 }
 
 // Key of ASCII code pressed
@@ -161,14 +162,14 @@ void onMouse(int button, int state, int pX, int pY) {
 
 	if (state == GLUT_DOWN) {
 		if (pKeyPressed) {
-			// Add the clicked point to the vertices
+			//add the clicked point to the vertices
 			vertices.push_back(cX);
 			vertices.push_back(cY);
-			
+			std::cout <<"Point added: " << cX << " " << cY << std::endl;
 		}
 		else if (lKeyPressed) {
-			// Find the closest point to the clicked location
-			float threshold = 0.05f; // Adjust this value as needed
+			//find the closest point to the clicked location
+			float threshold = 0.05f; // this can be adjusted
 			int closestPointIndex = -1;
 			for (int i = 0; i < vertices.size(); i += 2) {
 				float dx = vertices[i] - cX;
@@ -180,13 +181,13 @@ void onMouse(int button, int state, int pX, int pY) {
 			}
 			if (closestPointIndex != -1) {
 				// Clear the selected points if already present
-				if (selected.size() > 4) {
-					selected.clear();
-				}
+				//if (selected.size() > 4) {
+					//selected.clear();
+				//}
 				// Add the clicked point to the selected points
 				selected.push_back(vertices[closestPointIndex]);
 				selected.push_back(vertices[closestPointIndex + 1]);
-				std::cout << selected[0] << " " << selected[1];
+				//std::cout << selected[0] << " " << selected[1];
 			}
 		}
 	}
