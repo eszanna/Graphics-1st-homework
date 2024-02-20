@@ -32,6 +32,7 @@
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
 #include "framework.h"
+#include <iostream>
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
@@ -60,46 +61,49 @@ const char * const fragmentSource = R"(
 )";
 
 GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
+unsigned int vao, vboPoints;  // virtual world on the GPU
+unsigned int vboSelected;  // Buffer for selected points
 
+std::vector<GLfloat> vertices; //here I store the coordinates x and y
+std::vector<GLfloat> selected;
+
+bool lKeyPressed = false;
+bool pKeyPressed = false;
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
 
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f };
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		sizeof(vertices),  // # bytes
-		vertices,	      	// address
-		GL_STATIC_DRAW);	// we do not change later
-
+	glGenBuffers(1, &vboPoints);	// Generate 1 buffer
+	glBindBuffer(GL_ARRAY_BUFFER, vboPoints);
 	glEnableVertexAttribArray(0);  // AttribArray 0
 	glVertexAttribPointer(0,       // vbo -> AttribArray 0
 		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
 		0, NULL); 		     // stride, offset: tightly packed
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+
+	glGenBuffers(1, &vboSelected);  // Generate buffer for selected points
+	glBindBuffer(GL_ARRAY_BUFFER, vboSelected);
 
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
-
+GLint currently_binded_vbo;
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color
+
+	glClearColor(0.5f, 0.5f, 0.5f, 1.0f); // Set clear color to grey
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
-	// Set color to (0, 1, 0) = green
+	// Set color to (1, 0, 0) = red
 	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
+	glUniform3f(location, 1.0f, 0.0f, 0.0f); // 3 floats
 
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix,
+	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
 							  0, 1, 0, 0,    // row-major!
 							  0, 0, 1, 0,
 							  0, 0, 0, 1 };
@@ -107,20 +111,85 @@ void onDisplay() {
 	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
 
-	glBindVertexArray(vao);  // Draw call
-	
+	glBindVertexArray(vao);
 
-	glutSwapBuffers(); // exchange buffers for double buffering
-} 
+	std::cout << vboPoints << " id of the points" << std::endl;
+	std::cout << vboSelected << " id of the selected points" << std::endl;
+	glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &currently_binded_vbo);
 
+		// Draw points
+		glBindBuffer(GL_ARRAY_BUFFER, vboPoints);  // Draw call
+		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+		glPointSize(10.0f);
+		glDrawArrays(GL_POINTS, 0 , vertices.size() / 2 );
+
+		// Draw selected points/lines 
+		if (selected.size() == 4) {
+			glBufferData(GL_ARRAY_BUFFER, selected.size() * sizeof(float), &selected[0], GL_STATIC_DRAW);
+			glDrawArrays(GL_LINES, 0, selected.size() / 2);
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+		}
+
+		glutSwapBuffers(); // exchange buffers for double buffering
+		
+}
 
 // Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
+	switch (key) {
+	case 'l':
+		printf("l key pressed\n");
+		lKeyPressed = true;
+		pKeyPressed = false;
+		break;
+	case 'p':
+		printf("p key pressed\n");
+		pKeyPressed = true;
+		lKeyPressed = false;
+		break;
+	default:
+		printf("Wrong key");
+		break;
+	}
 }
 
-// Key of ASCII code released
-void onKeyboardUp(unsigned char key, int pX, int pY) {
+// Mouse click event
+void onMouse(int button, int state, int pX, int pY) {
+	// Convert to normalized device space
+	float cX = 2.0f * pX / windowWidth - 1;    // flip y axis
+	float cY = 1.0f - 2.0f * pY / windowHeight;
+
+	if (state == GLUT_DOWN) {
+		if (pKeyPressed) {
+			// Add the clicked point to the vertices
+			vertices.push_back(cX);
+			vertices.push_back(cY);
+			
+		}
+		else if (lKeyPressed) {
+			// Find the closest point to the clicked location
+			float threshold = 0.05f; // Adjust this value as needed
+			int closestPointIndex = -1;
+			for (int i = 0; i < vertices.size(); i += 2) {
+				float dx = vertices[i] - cX;
+				float dy = vertices[i + 1] - cY;
+				if (dx * dx + dy * dy < pow(threshold, 2)){
+					closestPointIndex = i;
+					break;
+				}
+			}
+			if (closestPointIndex != -1) {
+				// Clear the selected points if already present
+				if (selected.size() > 4) {
+					selected.clear();
+				}
+				// Add the clicked point to the selected points
+				selected.push_back(vertices[closestPointIndex]);
+				selected.push_back(vertices[closestPointIndex + 1]);
+				std::cout << selected[0] << " " << selected[1];
+			}
+		}
+	}
 }
 
 // Move mouse with key pressed
@@ -131,26 +200,9 @@ void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the 
 	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
 }
 
-
-// Mouse click event
-void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-
-	char * buttonStat;
-	switch (state) {
-	case GLUT_DOWN: buttonStat = "pressed"; break;
-	case GLUT_UP:   buttonStat = "released"; break;
-	}
-
-	switch (button) {
-	case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
-	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
-	}
+// Key of ASCII code released
+void onKeyboardUp(unsigned char key, int pX, int pY) {
 }
-
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
