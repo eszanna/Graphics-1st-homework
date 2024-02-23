@@ -60,9 +60,53 @@ const char * const fragmentSource = R"(
 	}
 )";
 
+class Line {
+public: float m, b;
+
+	  Line(float m, float b) {
+		  this->m = m;
+		  this->b = b;
+	  };
+
+	  Line(float x1, float y1, float x2, float y2) {
+		  m = (y2 - y1) / (x2 - x1);
+		  b = ((-(y2 - y1) / (x2 - x1)) * x1) + y1;
+	  };
+ 
+};
+
+class LineCollection {
+public: std::vector<Line> lineCollection;
+
+	  void add(Line l) {
+		  lineCollection.push_back(l);
+	  };
+
+	  void drawLines() {
+		  glDrawArrays(GL_LINES, 0, lineCollection.size());
+		  for (int i = 0; i < lineCollection.size(); i++) {
+			  //lineCollection[i].drawLine();
+		  }
+	  };
+
+	  int getSize() {
+		  return lineCollection.size();
+	  };
+
+	  std::vector<float> return_points() {
+		  std::vector<float> points;
+		  for (int line = 0; line < lineCollection.size(); line++) {
+			  points.push_back(-1.0f);
+			  points.push_back(lineCollection[line].m*(-1.0f) + lineCollection[line].b);
+			  points.push_back(1.0f);
+			  points.push_back(lineCollection[line].m * (1.0f) + lineCollection[line].b);
+		  }
+		  return points;
+	  }
+};
+
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao, vboPoints;  // virtual world on the GPU
-unsigned int vboSelected;  // Buffer for selected points
 
 std::vector<GLfloat> vertices; //here I store the coordinates x and y of every drawn point
 std::vector<GLfloat> selected; //and here the coordinates of the ones that we choose after pressing l
@@ -89,7 +133,7 @@ void onInitialization() {
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
-
+LineCollection collection;
 // Window has become invalid: Redraw
 void onDisplay() {
 
@@ -110,27 +154,34 @@ void onDisplay() {
 
 	glBindVertexArray(vao);
 
-	//std::cout << vboPoints << " id of the points" << std::endl;
-	//std::cout << vboSelected << " id of the selected points" << std::endl;
-	//glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &currently_binded_vbo);
-
 		// Draw points
 		glBindBuffer(GL_ARRAY_BUFFER, vboPoints);  // Draw call
 		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
 		glPointSize(10.0f);
 		
 		glDrawArrays(GL_POINTS, 0 , vertices.size() / 2 );
-
+		
 		// Draw selected points/lines 
 		if (selected.size() >= 4) {
 			// Set color to (0, 1, 1) = cyan
 			int location = glGetUniformLocation(gpuProgram.getId(), "color");
 			glUniform3f(location, 0.0f, 1.0f, 1.0f); // 3 floats
 
-			glBufferData(GL_ARRAY_BUFFER, selected.size() * sizeof(float), &selected[0], GL_STATIC_DRAW); // updating the buffer data with the points we want to connect
-			glDrawArrays(GL_LINES, 0, selected.size() / 2);
-			glBindBuffer(GL_ARRAY_BUFFER, 0);
+		
+			for (int i = 0; i < selected.size(); i += 4) {
+				if (i + 4 == selected.size()) {
+						Line line(selected[i], selected[i + 1], selected[i + 2], selected[i + 3]);
+						collection.add(line);
+					}
+				}
+			std::vector<float> points = collection.return_points();
+				
+			std::cout << collection.getSize() << " linecollection size..." << std::endl;
+			glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(float), &points[0], GL_STATIC_DRAW);
+			glDrawArrays(GL_LINES, 0, points.size());
+			std::cout << points.size() << std::endl;
 		}
+		
 
 		glutSwapBuffers(); // exchange buffers for double buffering
 }
@@ -149,7 +200,7 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 		lKeyPressed = false;
 		break;
 	default:
-		printf("Wrong key");
+		printf("Wrong key\n");
 		break;
 	}
 }
@@ -180,10 +231,6 @@ void onMouse(int button, int state, int pX, int pY) {
 				}
 			}
 			if (closestPointIndex != -1) {
-				// Clear the selected points if already present
-				//if (selected.size() > 4) {
-					//selected.clear();
-				//}
 				// Add the clicked point to the selected points
 				selected.push_back(vertices[closestPointIndex]);
 				selected.push_back(vertices[closestPointIndex + 1]);
@@ -209,3 +256,7 @@ void onKeyboardUp(unsigned char key, int pX, int pY) {
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 }
+
+
+
+//a.DRAW()
