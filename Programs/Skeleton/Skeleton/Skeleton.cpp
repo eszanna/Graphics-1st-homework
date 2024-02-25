@@ -32,7 +32,7 @@
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
 #include "framework.h"
-#include <iostream>
+#include <iostream> //kivenni majd!!!!!!!!!!
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
@@ -59,6 +59,44 @@ const char * const fragmentSource = R"(
 		outColor = vec4(color, 1);	// computed color is the color of the primitive
 	}
 )";
+class PointCollection {
+public: std::vector<GLfloat> vertices;
+
+	  void add(float cX, float cY) {//add the clicked point to the vertices
+		  vertices.push_back(cX);
+		  vertices.push_back(cY);
+		  std::cout << "Point added: " << cX << " " << cY << std::endl;
+	  }
+
+	  void findClosest(float cX, float cY, PointCollection &selected) {
+		  //find the closest point to the clicked location
+		  float threshold = 0.05f; // this can be adjusted
+		  int closestPointIndex = -1;
+		  for (int i = 0; i < vertices.size(); i += 2) {
+			  float dx = vertices[i] - cX;
+			  float dy = vertices[i + 1] - cY;
+			  if (dx * dx + dy * dy < pow(threshold, 2)) {
+				  closestPointIndex = i;
+				  break;
+			  }
+		  }
+		  if (closestPointIndex != -1) {
+			  // Add the clicked point to the selected points
+			  selected.vertices.push_back(vertices[closestPointIndex]);
+			  selected.vertices.push_back(vertices[closestPointIndex + 1]);
+		  }
+	  }
+
+	  void drawPoints(float size, float R, float G, float B, int &location) {
+		  glUniform3f(location, R, G, B); // 3 floats
+
+		  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+		  glPointSize(size);
+
+		  glDrawArrays(GL_POINTS, 0, vertices.size() / 2);
+	  }
+
+};
 
 class Line {
 public: float m, b;
@@ -77,44 +115,60 @@ public: float m, b;
 
 class LineCollection {
 public: std::vector<Line> lineCollection;
+		 Line* selectedline = nullptr;
 
 	  void add(Line l) {
 		  lineCollection.push_back(l);
 	  };
 
-	  void drawLines() {
-		  glDrawArrays(GL_LINES, 0, lineCollection.size());
-		  for (int i = 0; i < lineCollection.size(); i++) {
-			  //lineCollection[i].drawLine();
+	  void drawLines(float R, float G, float B, int &location) {
+		  std::vector<float> points;
+		  for (int line = 0; line < lineCollection.size(); line++) {
+			  points.push_back(-1.0f);
+			  points.push_back(lineCollection[line].m * (-1.0f) + lineCollection[line].b);
+			  points.push_back(1.0f);
+			  points.push_back(lineCollection[line].m * (1.0f) + lineCollection[line].b);
+			  
 		  }
+		  glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(float), &points[0], GL_STATIC_DRAW);
+		  glUniform3f(location, R, G, B); // 3 floats
+		  glDrawArrays(GL_LINES, 0, points.size());
 	  };
+
 
 	  int getSize() {
 		  return lineCollection.size();
 	  };
 
-	  std::vector<float> return_points() {
-		  std::vector<float> points;
-		  for (int line = 0; line < lineCollection.size(); line++) {
-			  points.push_back(-1.0f);
-			  points.push_back(lineCollection[line].m*(-1.0f) + lineCollection[line].b);
-			  points.push_back(1.0f);
-			  points.push_back(lineCollection[line].m * (1.0f) + lineCollection[line].b);
+	  void selectClickedLine(float cX, float cY) {
+		  for (Line &l : lineCollection) {
+			  if (l.m * cX + l.b - cY < 0.01f) {
+				  printf("Line selected at point %f %f\n", cX, cY);
+				  selectedline = &l;
+				  break;
+			  }
+				
+		 }
+	  };
+
+	  void dragSelectedLine(float cX, float cY) {
+		  if (selectedline) { // if a line is selected
+			  selectedline->b = cY - selectedline->m * cX;
+			  printf("%f\n", selectedline->b);
+			  printf("%f\n", selectedline->m);
 		  }
-		  return points;
-	  }
+	  };
 };
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao, vboPoints;  // virtual world on the GPU
 
-std::vector<GLfloat> vertices; //here I store the coordinates x and y of every drawn point
-std::vector<GLfloat> selected; //and here the coordinates of the ones that we choose after pressing l
-
 bool lKeyPressed = false;
 bool pKeyPressed = false;
+bool mKeyPressed = false;
 
 GLint currently_binded_vbo; // for testing
+
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
@@ -133,7 +187,12 @@ void onInitialization() {
 	// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
+
+PointCollection points; //here I store the coordinates x and y of every drawn point
+PointCollection selected; //these will be the points of the lines
+
 LineCollection collection;
+
 // Window has become invalid: Redraw
 void onDisplay() {
 
@@ -141,48 +200,37 @@ void onDisplay() {
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
 	// Set color to (1, 0, 0) = red
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 1.0f, 0.0f, 0.0f); // 3 floats
+	int colorloc = glGetUniformLocation(gpuProgram.getId(), "color");
+	glUniform3f(colorloc, 1.0f, 0.0f, 0.0f); // 3 floats
 
 	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
 							  0, 1, 0, 0,    // row-major!
 							  0, 0, 1, 0,
 							  0, 0, 0, 1 };
 
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
+	int location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
 	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
 
 	glBindVertexArray(vao);
 
 		// Draw points
 		glBindBuffer(GL_ARRAY_BUFFER, vboPoints);  // Draw call
-		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
-		glPointSize(10.0f);
-		
-		glDrawArrays(GL_POINTS, 0 , vertices.size() / 2 );
-		
-		// Draw selected points/lines 
-		if (selected.size() >= 4) {
-			// Set color to (0, 1, 1) = cyan
-			int location = glGetUniformLocation(gpuProgram.getId(), "color");
-			glUniform3f(location, 0.0f, 1.0f, 1.0f); // 3 floats
+		points.drawPoints(10.0f, 1.0f, 0.0f, 0.0f, colorloc);
 
-		
-			for (int i = 0; i < selected.size(); i += 4) {
-				if (i + 4 == selected.size()) {
-						Line line(selected[i], selected[i + 1], selected[i + 2], selected[i + 3]);
+		// Draw lines 
+		if (selected.vertices.size() >= 4 ) {
+			if (!mKeyPressed) { //we dont want to add lines 
+				for (int i = 0; i < selected.vertices.size(); i += 4) {
+					if (i + 4 == selected.vertices.size()) {
+						Line line(selected.vertices[i], selected.vertices[i + 1], selected.vertices[i + 2], selected.vertices[i + 3]);
 						collection.add(line);
+						//printf("Equation of the line: y = %f x + %f\n", line.m, line.b);
 					}
 				}
-			std::vector<float> points = collection.return_points();
-				
-			std::cout << collection.getSize() << " linecollection size..." << std::endl;
-			glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(float), &points[0], GL_STATIC_DRAW);
-			glDrawArrays(GL_LINES, 0, points.size());
-			std::cout << points.size() << std::endl;
+			}
+			glLineWidth(3.0f);
+			collection.drawLines(0.0f, 1.0f, 1.0f, colorloc);
 		}
-		
-
 		glutSwapBuffers(); // exchange buffers for double buffering
 }
 
@@ -193,11 +241,19 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 		printf("l key pressed\n");
 		lKeyPressed = true;
 		pKeyPressed = false;
+		mKeyPressed = false;
 		break;
 	case 'p':
 		printf("p key pressed\n");
 		pKeyPressed = true;
 		lKeyPressed = false;
+		mKeyPressed = false;
+		break;
+	case 'm':
+		printf("m key pressed\n");
+		mKeyPressed = true;
+		lKeyPressed = false;
+		pKeyPressed = false;
 		break;
 	default:
 		printf("Wrong key\n");
@@ -213,29 +269,16 @@ void onMouse(int button, int state, int pX, int pY) {
 
 	if (state == GLUT_DOWN) {
 		if (pKeyPressed) {
-			//add the clicked point to the vertices
-			vertices.push_back(cX);
-			vertices.push_back(cY);
-			std::cout <<"Point added: " << cX << " " << cY << std::endl;
+			points.add(cX, cY);
+
 		}
 		else if (lKeyPressed) {
-			//find the closest point to the clicked location
-			float threshold = 0.05f; // this can be adjusted
-			int closestPointIndex = -1;
-			for (int i = 0; i < vertices.size(); i += 2) {
-				float dx = vertices[i] - cX;
-				float dy = vertices[i + 1] - cY;
-				if (dx * dx + dy * dy < pow(threshold, 2)){
-					closestPointIndex = i;
-					break;
-				}
-			}
-			if (closestPointIndex != -1) {
-				// Add the clicked point to the selected points
-				selected.push_back(vertices[closestPointIndex]);
-				selected.push_back(vertices[closestPointIndex + 1]);
-				//std::cout << selected[0] << " " << selected[1];
-			}
+			points.findClosest(cX, cY, selected);
+		}
+
+		else if (mKeyPressed) {
+			collection.selectClickedLine(cX, cY);
+			
 		}
 	}
 }
@@ -246,6 +289,11 @@ void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the 
 	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 	float cY = 1.0f - 2.0f * pY / windowHeight;
 	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
+
+
+	collection.dragSelectedLine(cX, cY);
+	glutPostRedisplay();
+
 }
 
 // Key of ASCII code released
@@ -256,7 +304,3 @@ void onKeyboardUp(unsigned char key, int pX, int pY) {
 void onIdle() {
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
 }
-
-
-
-//a.DRAW()
